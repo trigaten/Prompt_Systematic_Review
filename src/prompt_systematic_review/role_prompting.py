@@ -4,42 +4,48 @@ from typing import List
 import re
 import time
 import json
+from json.decoder import JSONDecodeError
 from datetime import datetime
-import concurrent.futures
+from tenacity import (
+    retry,
+    before_log,
+    stop_after_attempt,
+    wait_random_exponential,
+)
+import pandas as pd
+import logging
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+logging.getLogger("httpx").setLevel(
+    logging.WARNING
+)  # Ensure success messages from httpx are not printed to console
+
+with open("data/mmlu_configs.json", "r") as file:
+    mmlu_configs = json.load(file)["configs"]
 
 
-def query_model_with_timeout(
-    prompt: str, question: str, model_name: str, output_tokens: int
-) -> dict:
-    """
-    Query the OpenAI API with a prompt and a question.
-    :param prompt: The prompt to use.
-    :param question: The question to use from the dataset.
-    :param model_name: The OpenAI model to use.
-    :param output_tokens: The maximum number of output tokens to generate.
-    :return: The response from the API.
-    """
+@retry(
+    wait=wait_random_exponential(min=1, max=60),
+    stop=stop_after_attempt(20),
+)
+def query_model_with_backoff(**kwargs):
     try:
-        response = openai.chat.completions.create(
-            model=model_name,
-            messages=[
-                {"role": "system", "content": prompt},
-                {"role": "user", "content": question},
-            ],
-            max_tokens=output_tokens,
-        )
-        return response
+        return openai.chat.completions.create(**kwargs)
     except Exception as e:
-        print(f"An error occurred during API call: {e}")
-        return None
+        logger.error(f"Query failed with error: {e}")
+        raise
 
 
 def query_model(
     prompt: str,
     question: str,
     model_name: str,
-    output_tokens: int = 300,
-    timeout: float = 15.0,
+    output_tokens: int = 500,
+    return_json=False,
+    rereading: bool = False,
+    seed: int = 42,
+    temperature: float = 0.0,
 ) -> dict:
     """
     Query the OpenAI API with a timeout.
@@ -50,20 +56,40 @@ def query_model(
     :param timeout: Timeout for the request in seconds.
     :return: The response from the API or None if timeout occurs.
     """
-    with concurrent.futures.ThreadPoolExecutor() as executor:
-        future = executor.submit(
-            query_model_with_timeout, prompt, question, model_name, output_tokens
+    if rereading:
+        messages = [
+            {"role": "system", "content": prompt},
+            {"role": "user", "content": question + "\n\n" + question},
+        ]
+    else:
+        messages = [
+            {"role": "system", "content": prompt},
+            {"role": "user", "content": question},
+        ]
+    if return_json:
+        response = query_model_with_backoff(
+            model=model_name,
+            messages=messages,
+            max_tokens=output_tokens,
+            response_format={"type": "json_object"},
+            seed=seed,
+            temperature=temperature,
         )
-        try:
-            return future.result(timeout=timeout)
-        except concurrent.futures.TimeoutError:
-            print("API call timed out.")
-            return None
+        return response
+    else:
+        response = query_model_with_backoff(
+            model=model_name,
+            messages=messages,
+            max_tokens=output_tokens,
+            seed=seed,
+            temperature=temperature,
+        )
+        return response
 
 
-def evaluate_response(response: dict, correct_answer: str) -> bool:
+def evaluate_gsm8k_response(response: dict, correct_answer: str) -> bool:
     """
-    Evaluate the response from the API and return whether it is correct.
+    Evaluate the response from the API for a GSM8K question and return whether it is correct.
     :param response: The response from the API.
     :param correct_answer: The correct answer to the question taken from the dataset.
     :return: Whether the response is correct.
@@ -77,6 +103,43 @@ def evaluate_response(response: dict, correct_answer: str) -> bool:
     return final_answer == correct
 
 
+def evaluate_mmlu_response(
+    response: dict, correct_answer: str, json_mode: bool
+) -> bool:
+    """
+    Evaluate the response from the API for a MMLU question and return whether it is correct.
+    :param response: The response from the API.
+    :param correct_answer: The correct answer to the question taken from the dataset.
+    :return: Whether the response is correct.
+    """
+    if json_mode:
+        try:
+            json_response = json.loads(response.message.content)
+            return json_response["answer"] == correct_answer
+        except JSONDecodeError as e:
+            print(f"JSONDecodeError: {e}")
+            print("Error occurred at: Line {}, Column {}".format(e.lineno, e.colno))
+            print(
+                "Problematic text snippet: ",
+                response.message.content[max(0, e.pos - 50) : e.pos + 50],
+            )
+            return False
+    else:
+        all_letters_in_response = find_quotes_with_letters(response.message.content)
+        if len(all_letters_in_response) == 0:
+            return "incorrect"
+        elif len(all_letters_in_response) == 1:
+            if all_letters_in_response[0] == correct_answer:
+                return "correct"
+            else:
+                return "incorrect"
+        else:
+            if correct_answer in all_letters_in_response:
+                return "under review"
+            else:
+                return "incorrect"
+
+
 def evaluate_prompts(
     prompts: List[str],
     dataset: str,
@@ -84,6 +147,13 @@ def evaluate_prompts(
     split: str,
     model_name: str,
     examples: None or int = 1,
+    start_index: int = 0,
+    log_interval: int = 25,
+    max_tokens: int = 5000,
+    json_mode: bool = False,
+    reread: bool = False,
+    seed: int = 42,
+    temperature: float = 0.0,
 ) -> dict:
     """
     Evaluate a list of prompts on a dataset and return the results.
@@ -96,8 +166,7 @@ def evaluate_prompts(
     :return: The results of the evaluation.
     """
 
-    data = load_hf_dataset(dataset_name=dataset, name=config_name, split=split)
-
+    query_count = 0
     results = {prompt: {"correct": 0, "total": 0} for prompt in prompts}
     information = {
         "dataset": dataset,
@@ -111,46 +180,152 @@ def evaluate_prompts(
         "total_wall_time": 0,
     }
 
-    query_count = 0
+    if dataset == "gsm8k":
+        data = load_hf_dataset(dataset_name=dataset, name=config_name, split=split)
 
-    for i, item in enumerate(data):
-        question = item["question"]
-        correct_answer = item["answer"]
-        for j, prompt in enumerate(prompts):
-            start_time = time.time()
+        for i, item in enumerate(data):
+            if i >= start_index:
+                question = item["question"]
+                correct_answer = item["answer"]
+                for prompt in prompts:
+                    start_time = time.time()
+                    response = query_model(
+                        prompt,
+                        question,
+                        model_name=model_name,
+                        output_tokens=max_tokens,
+                        return_json=json_mode,
+                        rereading=reread,
+                        seed=seed,
+                        temperature=temperature,
+                    )
+                    query_count += 1
+                    end_time = time.time()
+                    wall_time = end_time - start_time
+                    information["total_wall_time"] += wall_time
+                    information["total_input_tokens"] += response.usage.prompt_tokens
+                    information[
+                        "total_output_tokens"
+                    ] += response.usage.completion_tokens
+                    response_dict = response_to_dict(response)
+                    is_correct = evaluate_gsm8k_response(
+                        response.choices[0], correct_answer
+                    )
+                    information["calls"].append(
+                        {
+                            "prompt": prompt,
+                            "question": question,
+                            "correct_answer": correct_answer,
+                            "response": response_dict,
+                            "marked_correct": is_correct,
+                            "wall_time": wall_time,
+                        }
+                    )
+                    results[prompt]["total"] += 1
+                    if is_correct:
+                        results[prompt]["correct"] += 1
+                    if query_count % log_interval == 0:
+                        try:
+                            write_to_file(
+                                [results, information], query_count, log_interval
+                            )
+                        except Exception as e:
+                            print(f"Error writing to file: {e}")
 
-            response = query_model(prompt, question, model_name=model_name)
-            query_count += 1
-            end_time = time.time()
-            wall_time = end_time - start_time
-            information["total_wall_time"] += wall_time
-            information["total_input_tokens"] += response.usage.prompt_tokens
-            information["total_output_tokens"] += response.usage.completion_tokens
-            response_dict = response_to_dict(response)
-            is_correct = evaluate_response(response.choices[0], correct_answer)
-            information["calls"].append(
-                {
-                    "prompt": prompt,
-                    "question": question,
-                    "correct_answer": correct_answer,
-                    "response": response_dict,
-                    "marked_correct": is_correct,
-                    "wall_time": wall_time,
-                }
-            )
-            results[prompt]["total"] += 1
-            if is_correct:
-                results[prompt]["correct"] += 1
-            if query_count % 50 == 0 or (examples and j + 1 == len(prompts)):
-                try:
-                    write_to_file([results, information], query_count)
-                except Exception as e:
-                    print(f"Error writing to file: {e}")
+            if examples and i + 1 == examples + start_index:
+                break
+        return results, information
 
-        if examples and i + 1 == examples:
-            break
+    elif dataset == "mmlu":
+        df = load_mmlu(configs=mmlu_configs, split=split)
 
-    return results, information
+        for i, example in df.iterrows():
+            if i >= start_index:
+                question = example["input"]
+                correct_answer = example["answer"]
+                choice_A, choice_B, choice_C, choice_D = (
+                    example["A"],
+                    example["B"],
+                    example["C"],
+                    example["D"],
+                )
+                multiple_choice_question = """
+                {question}
+                A. {choice_A}
+                B. {choice_B}
+                C. {choice_C}
+                D. {choice_D}
+                """.format(
+                    question=question,
+                    choice_A=choice_A,
+                    choice_B=choice_B,
+                    choice_C=choice_C,
+                    choice_D=choice_D,
+                )
+                for prompt in prompts:
+                    start_time = time.time()
+                    response = query_model(
+                        prompt,
+                        multiple_choice_question,
+                        model_name=model_name,
+                        output_tokens=max_tokens,
+                        return_json=json_mode,
+                        rereading=reread,
+                    )
+                    end_time = time.time()
+                    wall_time = end_time - start_time
+                    query_count += 1
+                    information["total_wall_time"] += wall_time
+                    information["total_input_tokens"] += response.usage.prompt_tokens
+                    information[
+                        "total_output_tokens"
+                    ] += response.usage.completion_tokens
+                    response_dict = response_to_dict(response)
+                    eval_result = evaluate_mmlu_response(
+                        response.choices[0], correct_answer, json_mode
+                    )
+
+                    if json_mode:
+                        multiple_choice_question = (
+                            multiple_choice_question
+                            + '\nRemember to return a JSON with the answer to the question containing only the letter "A", "B", "C" or "D", labeled as "answer".'
+                        )
+
+                    information["calls"].append(
+                        {
+                            "prompt": prompt,
+                            "question": "Question: "
+                            + multiple_choice_question
+                            + "\n Read the question again: "
+                            + multiple_choice_question
+                            if reread
+                            else multiple_choice_question,
+                            "correct_answer": correct_answer,
+                            "response": response_dict,
+                            "mark": eval_result,
+                            "wall_time": wall_time,
+                            "config": example["config"],
+                        }
+                    )
+                    results[prompt]["total"] += 1
+                    if eval_result == "correct":
+                        results[prompt]["correct"] += 1
+                    elif eval_result == "under review":
+                        results[prompt]["under review"] += 1
+                    if query_count % log_interval == 0:
+                        try:
+                            write_to_file(
+                                [results, information], query_count, log_interval
+                            )
+                        except Exception as e:
+                            print(f"Error writing to file: {e}")
+            if examples and i + 1 == examples + start_index:
+                break
+        return results, information
+
+    else:
+        # Throw an error saying that we don't support this dataset
+        raise NotImplementedError(f"Dataset {dataset} is not supported.")
 
 
 def extract_numbers(string: str) -> List[int]:
@@ -203,9 +378,37 @@ def response_to_dict(response):
     return response_data
 
 
-def write_to_file(data, count):
+def write_to_file(data, count, log_interval=25):
     current_datetime = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-    file_path = f"RP_eval_results_{current_datetime}_part_{((count//50) + 1)}.json"
+    file_path = f"data/benchmarking/eval_results_{current_datetime}_part_{((count//log_interval))}.json"
     with open(file_path, "w") as json_file:
         json.dump(data, json_file)
     print(f"Written results to {file_path}")
+
+
+def load_mmlu(configs: List[str], split: str) -> pd.DataFrame:
+    column_names = ["input", "A", "B", "C", "D", "answer"]
+
+    # List to store each DataFrame
+    dataframes = []
+
+    # Loop through the list of file names
+    for file_name in configs:
+        # Read the CSV file with specified column names and append to the list
+        df = pd.read_csv(
+            "data/mmlu/data/" + split + "/" + file_name + "_test.csv",
+            names=column_names,
+        )
+        df["config"] = file_name
+        dataframes.append(df)
+
+    # Concatenate all DataFrames into a single DataFrame
+    combined_df = pd.concat(dataframes, ignore_index=True)
+    df = combined_df.sample(frac=1, random_state=42).reset_index(drop=True)
+    return df
+
+
+def find_quotes_with_letters(text):
+    pattern = r'["\']([A-D])["\']'
+    matches = re.findall(pattern, text)
+    return matches

@@ -4,34 +4,58 @@ Test a set of prompts against a dataset and return the results. Currently workin
 
 from prompt_systematic_review.role_prompting import evaluate_prompts
 import openai
-from prompt_systematic_review.utils import process_paper_title
 from dotenv import load_dotenv
 import os
 from datetime import datetime
 import json
 
 load_dotenv(dotenv_path="./.env")  # load all entries from .env file
+openai.api_key = os.getenv("OPENAI_API_KEY")  # load openai key
+with open(
+    "data/prompts.json", "r"
+) as file:  # load prompts from prompts.json to make prompts more modular.
+    prompts = json.load(file)
 
-openai.api_key = os.getenv("OPENAI_API_KEY")
+baseline = prompts["mmlu baseline without json"]
+baseline_without_reasoning = prompts["mmlu baseline without reasoning"]
+baseline_with_reasoning = prompts["mmlu baseline with reasoning"]
+zero_shot_CoT = prompts["0-shot CoT"]
+two_shot_CoT = prompts["2-shot CoT"]
+two_shot_contrastive = prompts["2-shot contrastive CoT"]
+ten_shot_CoT = prompts["10-shot CoT"]
+ten_shot_contrastive = prompts["10-shot contrastive CoT"]
+# knowledgable_AI = prompts["knowledgable artificial intelligence"]
+# math_rookie = prompts["math rookie"]
+# genius = prompts['genius...']
+# idiot = prompts['idiot...']
+# careless_student = prompts['careless student']
+# gardener = prompts['gardener']
+# coin = prompts["coin that..."]
+# mathematician = prompts["mathematician"]
+# farmer = prompts["farmer"]
+police_officer = prompts["police officer"]
+ivy_league_prof = prompts["Ivy league math professor"]
+mentor = prompts["mentor"]
+plan_and_solve  = prompts["plan-and-solve"]
+
+
 
 prompts = [
-    "You are a math rookie. Solve the following problem and put your final answer after four hashtags like the following example: \nQuestion: What is (4 + 5) * 2?\nAnswer: 4 + 5 is 9, and 9 * 2 is ####18\n\n Make your response as short as possible.",
-    "You are a careless student. Solve the following problem and put your final answer after four hashtags like the following example: \nQuestion: What is (4 + 5) * 2?\nAnswer: 4 + 5 is 9, and 9 * 2 is ####18\n\n Make your response as short as possible.",
-    "You are a gardener. Solve the following problem and put your final answer after four hashtags like the following example: \nQuestion: What is (4 + 5) * 2?\nAnswer: 4 + 5 is 9, and 9 * 2 is ####18\n\n Make your response as short as possible.",
-    "You are a coin that always knows which side your head is facing. Solve the following problem and put your final answer after four hashtags like the following example: \nQuestion: What is (4 + 5) * 2?\nAnswer: 4 + 5 is 9, and 9 * 2 is ####18\n\n Make your response as short as possible.",
-    "You are a farmer. Solve the following problem and put your final answer after four hashtags like the following example: \nQuestion: What is (4 + 5) * 2?\nAnswer: 4 + 5 is 9, and 9 * 2 is ####18\n\n Make your response as short as possible.",
-    "You are a police officer. Solve the following problem and put your final answer after four hashtags like the following example: \nQuestion: What is (4 + 5) * 2?\nAnswer: 4 + 5 is 9, and 9 * 2 is ####18\n\n Make your response as short as possible.",
-    "You are a high school math teacher. Solve the following problem and put your final answer after four hashtags like the following example: \nQuestion: What is (4 + 5) * 2?\nAnswer: 4 + 5 is 9, and 9 * 2 is ####18\n\n Make your response as short as possible.",
-    "You are a esteemed Ivy League math professor. Solve the following problem and put your final answer after four hashtags like the following example: \nQuestion: What is (4 + 5) * 2?\nAnswer: 4 + 5 is 9, and 9 * 2 is ####18\n\n Make your response as short as possible.",
-    "You are a knowledgable artificial intelligence. Solve the following problem and put your final answer after four hashtags like the following example: \nQuestion: What is (4 + 5) * 2?\nAnswer: 4 + 5 is 9, and 9 * 2 is ####18\n\n Make your response as short as possible.",
-    "You are a mentor. Solve the following problem and put your final answer after four hashtags like the following example: \nQuestion: What is (4 + 5) * 2?\nAnswer: 4 + 5 is 9, and 9 * 2 is ####18\n\n Make your response as short as possible.",
+    baseline,
 ]
 
-dataset = "gsm8k"
-config_name = "main"
+dataset = "mmlu"  # mmlu or gsm8k
+config_name = None  # main if gs8k, None if mmlu
 split = "test"
 model = "gpt-4-1106-preview"
-examples = 1
+examples = 2 # number of examples to test
+start = 0  # start index for dataset
+log_interval = 25  # log interval for creatings jsons of results by query
+max_toks = 50
+rereading = False  # if true, will "reread" the question to the LM at query time
+return_json = False
+SEED = 42
+temp = 0.0
 
 eval = evaluate_prompts(
     prompts,
@@ -40,13 +64,20 @@ eval = evaluate_prompts(
     split,
     model,
     examples,
+    start_index=start,
+    log_interval=log_interval,
+    max_tokens=max_toks,
+    reread=rereading,
+    json_mode=return_json,
+    seed=SEED,
+    temperature=temp,
 )
 
 # Getting current date and time in YYYY-MM-DD_HH-MM-SS format
 current_datetime = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
 
 # File path for the JSON file
-file_path = f"RP_eval_results_{current_datetime}.json"
+file_path = f"data/benchmarking/eval_results_{current_datetime}.json"
 
 # Writing the dictionary to a JSON file
 with open(file_path, "w") as json_file:
