@@ -18,3 +18,8 @@ scripts/master_papers.csv
 scripts/t.py
 /RP_eval_results_*.json
 scripts/master_papers.csv
+data/s_data
+data/s_data/*
+forbidden_imports.py
+data/
+*.json
