@@ -1,4 +1,4 @@
-# %%
+# %% RUN 1st
 import os
 import requests
 import time
@@ -12,7 +12,7 @@ load_dotenv()
 api_key = os.getenv("SEMANTIC_SCHOLAR_API_KEY")
 
 
-# %%
+# %% RUN 2nd
 def rate_limited_request(url, headers, max_retries=3, delay=0.1):
     retries = 0
     while retries < max_retries:
@@ -52,6 +52,50 @@ def get_references(paper_id, api_key):
 
         return reference_ids
     return []
+
+def get_citation_counts(paper_ids):
+    """
+    Fetches citation counts for a list of paper IDs from Semantic Scholar's API.
+
+    Parameters:
+    - paper_ids (list): A list of paper IDs (strings).
+
+    Returns:
+    - dict: A dictionary where keys are paper IDs and values are citation counts.
+    """
+    # Define the URL for the batch API endpoint
+    url = 'https://api.semanticscholar.org/graph/v1/paper/batch'
+    
+    # Define the parameters for the fields you want to retrieve
+    params = {'fields': 'citationCount'}
+    
+    # The payload for the POST request, including the list of paper IDs
+    payload = {"ids": paper_ids}
+    
+    # Make the POST request to the batch API endpoint
+    response = requests.post(url, params=params, json=payload)
+    
+    # Initialize an empty dictionary to store the citation counts
+    citation_counts = {}
+    
+    # Check if the request was successful
+    if response.status_code == 200:
+        # Parse the JSON response
+        data = response.json()
+        
+        # Loop through the papers in the response
+        for paper in data:
+            # Extract the paper ID and citation count
+            paper_id = paper.get('paperId')
+            citation_count = paper.get('citationCount', 0)
+            
+            # Add the citation count to the dictionary
+            citation_counts[paper_id] = citation_count
+    else:
+        print(f"Failed to fetch data: {response.status_code}")
+    
+    return citation_counts
+
 
 
 # Function to query paper title from Arxiv Id
@@ -100,7 +144,7 @@ def get_paper_title(paper_id, api_key):
         return None
 
 
-# %%
+# %%Run 3rd
 import os
 import csv
 import json
@@ -109,7 +153,7 @@ import random
 
 
 # Path to the CSV file containing the papers' data
-csv_file_path = "master_papers.csv"
+csv_file_path = "./data/master_papers.csv"
 
 # Dictionary to hold the references
 paper_references = {}
@@ -172,7 +216,7 @@ with open("revised_paper_references.json", "w") as json_file:
     json.dump(paper_references, json_file, indent=4)
 print("Data saved to revised_paper_references.json")
 
-# %%
+# %%RUN 4th
 # Second main to add important papers not in our original dataset
 
 
@@ -242,7 +286,9 @@ titles = [
 
 # Processing the papers with a progress bar
 for title in tqdm(titles):
-    paper_id, references = get_references(title, api_key)
+    paper_id = query_paper_id(title, api_key)
+    references = get_references(paper_id, api_key)
+
     if paper_id:
         paper_references[paper_id] = references
     else:
@@ -258,7 +304,7 @@ with open("unmatched_titles_additional.json", "w") as json_file:
 print("Data saved to unmatched_titles_additional.json")
 
 
-# %%
+# %%Run 5th
 # Merge the two files
 
 # Load the existing data from both JSON files
@@ -280,7 +326,7 @@ with open("complete_paper_references.json", "w") as file:
 print("Merged data saved to complete_paper_references.json")
 
 
-# %%
+# %%Run 6th
 # Only keep refernces which refer to papers in our combined dataset
 
 # Load the merged paper references
@@ -300,156 +346,174 @@ with open("cleaned_complete_paper_references.json", "w") as file:
 print("Cleaned data saved to cleaned_merged_paper_references.json")
 
 
-# %%
+# %SKIP
 # Histogram of the top 30 most cited papers by internal citation count
 
-import json
-import matplotlib.pyplot as plt
-import textwrap
-import matplotlib
+# import json
+# import matplotlib.pyplot as plt
+# import textwrap
+# import matplotlib
 
-# Set font properties globally
-matplotlib.rcParams.update(
-    {
-        "font.family": "Arial",  # You can replace 'Arial' with 'Helvetica' or another modern font
-        "font.size": 8,  # You can adjust this value as needed
-    }
-)
+# # Set font properties globally
+# matplotlib.rcParams.update(
+#     {
+#         "font.family": "Arial",  # You can replace 'Arial' with 'Helvetica' or another modern font
+#         "font.size": 8,  # You can adjust this value as needed
+#     }
+# )
 
-# Load the data
-with open("cleaned_complete_paper_references.json", "r") as file:
-    data = json.load(file)
+# # Load the data
+# with open("data/cleaned_complete_paper_references.json", "r") as file:
+#     data = json.load(file)
 
-# Count the number of references for each key
-reference_counts = {key: len(references) for key, references in data.items()}
+# # Count the number of references for each key
+# reference_counts = {key: len(references) for key, references in data.items()}
 
-# Sort by the number of references and select the top 50
-top_25 = sorted(reference_counts.items(), key=lambda x: x[1], reverse=True)[:30]
+# # Sort by the number of references and select the top 50
+# top_25 = sorted(reference_counts.items(), key=lambda x: x[1], reverse=True)[:30]
 
-# Fetch the titles for the top 50 paper IDs
-top_25_titles = {paper_id: get_paper_title(paper_id, api_key) for paper_id, _ in top_25}
+# # Fetch the titles for the top 50 paper IDs
+# top_25_titles = {paper_id: get_paper_title(paper_id, api_key) for paper_id, _ in top_25}
 
-# Replace paper IDs with their titles in the top_50 list
-top_25_with_titles = [(top_25_titles[paper_id], count) for paper_id, count in top_25]
+# # Replace paper IDs with their titles in the top_50 list
+# top_25_with_titles = [(top_25_titles[paper_id], count) for paper_id, count in top_25]
 
-# Unpack the data for plotting
-titles, counts = zip(*top_25_with_titles)
+# # Unpack the data for plotting
+# titles, counts = zip(*top_25_with_titles)
 
-# Define the RGBA color
-rgba_color = (45 / 255, 137 / 255, 145 / 255, 1)  # Converted from rgba(45, 137, 145, 1)
+# # Define the RGBA color
+# rgba_color = (45 / 255, 137 / 255, 145 / 255, 1)  # Converted from rgba(45, 137, 145, 1)
 
-# Create a vertical bar chart
-plt.figure(figsize=(12, 8))
-plt.bar(titles, counts, color=rgba_color)
+# # Create a vertical bar chart
+# plt.figure(figsize=(12, 8))
+# plt.bar(titles, counts, color=rgba_color)
 
-# Rotate the x-axis labels by 45 degrees for better readability
-plt.xticks(rotation=45, ha="right")  # ha='right' aligns the labels at the right angle
+# # Rotate the x-axis labels by 45 degrees for better readability
+# plt.xticks(rotation=45, ha="right")  # ha='right' aligns the labels at the right angle
 
-# Add labels and title
-plt.ylabel("Number of References")
-plt.xlabel("Paper Title")
-plt.title("Top 30 Papers by Number of References")
+# # Add labels and title
+# plt.ylabel("Number of References")
+# plt.xlabel("Paper Title")
+# plt.title("Top 30 Papers by Number of References")
 
-# plt.tight_layout()  # Adjusts layout to prevent clipping of labels
-plt.show()
+# # plt.tight_layout()  # Adjusts layout to prevent clipping of labels
+# plt.show()
 
 
-# %%
+# %%SKIP
 # Generate a graph of all the papers with more than 10 internal references
 
+# import networkx as nx
+# import matplotlib.pyplot as plt
+# import textwrap
+
+# # Load the cleaned references
+# with open("data/cleaned_complete_paper_references.json", "r") as json_file:
+#     paper_references = json.load(json_file)
+
+# # Create the graph
+# G = nx.DiGraph()
+# for paper_id, references in paper_references.items():
+#     for ref_id in references:
+#         G.add_edge(paper_id, ref_id)
+
+# # Remove isolated nodes and nodes with less than 10 incoming edges
+# G.remove_nodes_from(list(nx.isolates(G)))
+# nodes_to_remove = [node for node in G.nodes() if G.in_degree(node) < 10]
+# G.remove_nodes_from(nodes_to_remove)
+
+# # Find the top 20 nodes with the most incoming edges
+# top_nodes = sorted(G.nodes(), key=lambda n: G.in_degree(n), reverse=True)[:20]
+
+# titles_above_threshold = {}
+# for paper_id in top_nodes:
+#     full_title = get_paper_title(paper_id, api_key)
+#     if full_title:
+#         display_title = title_mappings.get(
+#             full_title, full_title
+#         )  # Use the full title if not found in the dictionary
+#         if len(display_title) > 50:
+#             display_title = textwrap.shorten(
+#                 display_title, width=50, placeholder="..."
+#             )  # Shorten if longer than 60s
+#         titles_above_threshold[paper_id] = display_title
+
+# # Cap the maximum node size to prevent too large nodes
+# # max_size = 100000  # Maximum size for a node
+# node_sizes = [G.in_degree(node) * 2000 for node in G.nodes()]
+
+# # Draw the graph with adjusted layout parameters
+# plt.figure(figsize=(60, 35))  # Increased figure size for more space
+# pos = nx.kamada_kawai_layout(G, dist=None, scale=1)  # Adjust 'scale' as needed
+# nx.draw(
+#     G,
+#     pos,
+#     with_labels=False,
+#     node_size=node_sizes,
+#     node_color="skyblue",
+#     edge_color="gray",
+#     width=0.5,
+# )
+
+# # Assign and label top nodes with titles
+# for node, label in titles_above_threshold.items():
+#     x, y = pos[node]
+#     wrapped_label = label.split("\n")
+#     for i, line in enumerate(wrapped_label):
+#         plt.text(x, y, line, fontsize=18, ha="center", va="center")
+
+# plt.title("Graph of Paper References")
+# plt.show()
+
+
+# %%Run - Update File Path
+
 import networkx as nx
 import matplotlib.pyplot as plt
 import textwrap
 
-# Load the cleaned references
-with open("cleaned_complete_paper_references.json", "r") as json_file:
-    paper_references = json.load(json_file)
 
-# Create the graph
-G = nx.DiGraph()
-for paper_id, references in paper_references.items():
-    for ref_id in references:
-        G.add_edge(paper_id, ref_id)
-
-# Remove isolated nodes and nodes with less than 10 incoming edges
-G.remove_nodes_from(list(nx.isolates(G)))
-nodes_to_remove = [node for node in G.nodes() if G.in_degree(node) < 10]
-G.remove_nodes_from(nodes_to_remove)
-
-# Find the top 20 nodes with the most incoming edges
-top_nodes = sorted(G.nodes(), key=lambda n: G.in_degree(n), reverse=True)[:20]
-
-titles_above_threshold = {}
-for paper_id in top_nodes:
-    title = get_paper_title(paper_id, api_key)
-    if title:
-        if len(title) > 50:
-            title = textwrap.shorten(
-                title, width=50, placeholder="..."
-            )  # Shorten if longer than 60s
-        titles_above_threshold[paper_id] = title
-
-# Cap the maximum node size to prevent too large nodes
-# max_size = 100000  # Maximum size for a node
-node_sizes = [G.in_degree(node) * 2000 for node in G.nodes()]
-
-# Draw the graph with adjusted layout parameters
-plt.figure(figsize=(60, 35))  # Increased figure size for more space
-pos = nx.kamada_kawai_layout(G, dist=None, scale=1)  # Adjust 'scale' as needed
-nx.draw(
-    G,
-    pos,
-    with_labels=False,
-    node_size=node_sizes,
-    node_color="skyblue",
-    edge_color="gray",
-    width=0.5,
-)
-
-# Assign and label top nodes with titles
-for node, label in titles_above_threshold.items():
-    x, y = pos[node]
-    wrapped_label = label.split("\n")
-    for i, line in enumerate(wrapped_label):
-        plt.text(x, y, line, fontsize=18, ha="center", va="center")
-
-plt.title("Graph of Paper References")
-plt.show()
-
-
-# %%
-import networkx as nx
-import matplotlib.pyplot as plt
-import textwrap
-
-
-def adjust_overlap(pos, nodes_to_adjust, min_dist=0.1, repulsion_factor=1.05):
-    for _ in range(1000):  # Increase the number of iterations for a denser graph
+# Function to adjust node positions to maintain a min and max distance
+def adjust_overlap(pos, nodes_to_adjust, min_dist=1.0, max_dist=2.0, repulsion_factor=1.05, attraction_factor=0.95, vertical_bias=2.0):
+    for _ in range(1000):  # Iteration limit
         adjusted = False
-        for i, node1 in enumerate(nodes_to_adjust):
-            for node2 in nodes_to_adjust[i + 1 :]:
+        for node1 in nodes_to_adjust:
+            for node2 in nodes_to_adjust:
+                if node1 == node2:
+                    continue  # Skip self comparisons
                 x1, y1 = pos[node1]
                 x2, y2 = pos[node2]
                 dx, dy = x1 - x2, y1 - y2
-                dist = (dx**2 + dy**2) ** 0.5
-                if dist < min_dist:  # If nodes are too close, push them apart
-                    # Apply a repulsion factor to move nodes further apart
-                    if dist == 0:  # To avoid division by zero
-                        dx, dy = 1, 0
-                        dist = 1
-                    dx, dy = (
-                        dx / dist * min_dist * repulsion_factor,
-                        dy / dist * min_dist * repulsion_factor,
-                    )
-                    pos[node1] = (x1 + dx, y1 + dy)
-                    pos[node2] = (x2 - dx, y2 - dy)
-                    adjusted = True
-        if not adjusted:  # Break the loop if no adjustments were made
-            break
+                dist = (dx**2 + dy**2) ** 0.5  # Euclidean distance
+                
+                if dist < min_dist:  # Nodes too close, push apart
+                    factor = repulsion_factor
+                elif dist > max_dist:  # Nodes too far, pull together
+                    factor = -attraction_factor
+                else:
+                    continue  # Distance is acceptable, no adjustment
+                
+                if dist == 0:  # Prevent division by zero
+                    dx, dy = 1, 0
+                    dist = 1
+                
+                dx, dy = dx / dist * min_dist * factor, dy / dist * min_dist * factor
+                dy *= vertical_bias  # Apply vertical adjustment
+                
+                # Adjust positions
+                pos[node1] = (x1 + dx, y1 + dy)
+                pos[node2] = (x2 - dx, y2 - dy)
+                adjusted = True
+
+        if not adjusted:
+            break  # Stop if no adjustments were made in a full pass
 
 
 # Load the cleaned references
-with open("cleaned_complete_paper_references.json", "r") as json_file:
+with open(
+    "/Users/aayushgupta/Documents/GitHub/Prompt_Systematic_Review/src/prompt_systematic_review/experiments/cleaned_complete_paper_references.json",
+    "r",
+) as json_file:
     paper_references = json.load(json_file)
 
 # Create the graph
@@ -458,17 +522,55 @@ for paper_id, references in paper_references.items():
     for ref_id in references:
         G.add_edge(paper_id, ref_id)
 
-# Remove isolated nodes and nodes with less than 10 incoming edges
-G.remove_nodes_from(list(nx.isolates(G)))
-nodes_to_remove = [node for node in G.nodes() if G.in_degree(node) < 8]
-G.remove_nodes_from(nodes_to_remove)
 
-# Find the top 20 nodes with the most incoming edges
+technique_to_title = {
+    "Language Models are Few-Shot Learners": "Few-Shot Learning",
+    "A Survey on In-context Learning": "In-context Learning Survey",
+    "Exploring Demonstration Ensembling for In-context Learning": "Demonstration Ensembling",
+    "Unified Demonstration Retriever for In-Context Learning": "Unified Demo Retriever",
+    "Finding Support Examples for In-Context Learning": "Support Examples",
+    "Large Language Models Are Human-Level Prompt Engineers": "Human-Level Prompting",
+    "Measuring and Narrowing the Compositionality Gap in Language Models": "Compositionality Gap",
+    "Automatic Chain of Thought Prompting in Large Language Models": "Automatic CoT",
+    "Complexity-Based Prompting for Multi-Step Reasoning": "Complexity-Based Prompting",
+    "Self-Generated In-Context Learning: Leveraging Auto-regressive Language Models as a Demonstration Generator": "Self-Generated ICL",
+    "Least-to-Most Prompting Enables Complex Reasoning in Large Language Models": "Least-to-Most Prompting",
+    "Learning To Retrieve Prompts for In-Context Learning": "Prompt Retrieval",
+    "Fantastically Ordered Prompts and Where to Find Them: Overcoming Few-Shot Prompt Order Sensitivity": "Prompt Order Sensitivity",
+    "What Makes Good In-Context Examples for GPT-3?": "Good In-Context Examples",
+    "MoT: Memory-of-Thought Enables ChatGPT to Self-Improve": "Memory-of-Thought",
+    "kNN Prompting: Beyond-Context Learning with Calibration-Free Nearest Neighbor Inference": "kNN Prompting",
+    "Large Language Models are Zero-Shot Reasoners": "Zero-Shot Reasoning",
+    "Self-Consistency Improves Chain of Thought Reasoning in Language Models": "Self-Consistency",
+    "Large Language Models as Optimizers": "LLMs as Optimizers",
+    "Decomposed Prompting: A Modular Approach for Solving Complex Tasks": "Decomposed Prompting",
+    "Is a Question Decomposition Unit All We Need?": "Question Decomposition",
+    "Deductive Verification of Chain-of-Thought Reasoning": "Deductive Verification",
+    "Active Prompting with Chain-of-Thought for Large Language Models": "Active Prompting",
+    "Large Language Model Guided Tree-of-Thought": "LLM Guided ToT",
+    "Language Models (Mostly) Know What They Know": "LLM Self-Knowledge",
+    "Automatic Prompt Augmentation and Selection with Chain-of-Thought from Labeled Data": "Automatic Prompt Augmentation",
+    "Maieutic Prompting: Logically Consistent Reasoning with Recursive Explanations": "Maieutic Prompting",
+    "Plan-and-Solve Prompting: Improving Zero-Shot Chain-of-Thought Reasoning by Large Language Models": "Plan-and-Solve Prompting",
+    "Tree of Thoughts: Deliberate Problem Solving with Large Language Models": "Tree of Thoughts",
+    "Program of Thoughts Prompting: Disentangling Computation from Reasoning for Numerical Reasoning Tasks": "Program of Thoughts",
+    "Self-Refine: Iterative Refinement with Self-Feedback": "Self-Refine",
+    "Cumulative Reasoning with Large Language Models": "Cumulative Reasoning",
+    "Faithful Chain-of-Thought Reasoning": "Faithful CoT",
+    "Making Language Models Better Reasoners with Step-Aware Verifier": "Step-Aware Verification",
+    "Graph of Thoughts: Solving Elaborate Problems with Large Language Models": "Graph of Thoughts",
+    "Chain-of-Verification Reduces Hallucination in Large Language Models": "Chain-of-Verification",
+    "Better Zero-Shot Reasoning with Self-Adaptive Prompting": "Self-Adaptive Prompting",
+    "Rephrase and Respond: Let Large Language Models Ask Better Questions for Themselves": "Rephrase and Respond"
+}
+# Find the nodes with at least one incoming edge
+nodes_with_incoming_edges = [node for node in G.nodes() if G.in_degree(node) > 0]
+
 top_nodes = sorted(G.nodes(), key=lambda n: G.in_degree(n), reverse=True)[:25]
 
 
 # Define a function to wrap text into at most two lines
-def wrap_text(text, width, max_lines=2):
+def wrap_text(text, width, max_lines=3):
     wrapped_lines = textwrap.wrap(text, width)
     if len(wrapped_lines) > max_lines:
         wrapped_lines = wrapped_lines[:max_lines]
@@ -478,42 +580,50 @@ def wrap_text(text, width, max_lines=2):
     return "\n".join(wrapped_lines)
 
 
+# Assign and label nodes with titles
 titles_above_threshold = {}
 for paper_id in top_nodes:
-    title = get_paper_title(
-        paper_id, api_key
-    )  # Function to fetch paper title using paper_id
-    if title:
-        wrapped_title = wrap_text(title, 40)  # Wrap the title into at most two lines
+    full_title = get_paper_title(paper_id, api_key)  # Fetch full paper title
+    if full_title:
+        display_title = technique_to_title.get(full_title, full_title)
+        wrapped_title = wrap_text(display_title, 10)
         titles_above_threshold[paper_id] = wrapped_title
 
+# Set node sizes proportional to the number of incoming edges (increased size)
+node_sizes = [((G.in_degree(node) * 3000)+1000) for node in top_nodes]
 
-# Cap the maximum node size to prevent too large nodes
-node_sizes = [G.in_degree(node) * 2000 for node in G.nodes()]
+# Calculate font size based on in-degree (you can adjust the scaling factor)
+font_sizes = {node: G.in_degree(node) * 0.60 + 14 for node in top_nodes}
 
 # Draw the graph with adjusted layout parameters
-plt.figure(figsize=(60, 35))
-pos = nx.kamada_kawai_layout(G, dist=None, scale=1)
+plt.figure(figsize=(50, 30))
 
-adjust_overlap(pos, top_nodes, min_dist=0.2, repulsion_factor=1.05)
+pos = nx.spring_layout(G, k=.3, iterations=50, scale=2)  # Initial layout
+adjust_overlap(pos, top_nodes, min_dist=1, max_dist=7.5)  # Adjust node positions
 
-# Draw all nodes first
-nx.draw_networkx_nodes(G, pos, node_size=node_sizes, node_color="skyblue")
+# Draw nodes with incoming edges
+nx.draw_networkx_nodes(
+    G, pos, nodelist=top_nodes, node_size=node_sizes, node_color=(45/255, 137/255, 145/255, 1)
+)
 
 # Draw the edges
-nx.draw_networkx_edges(G, pos, edge_color="gray", width=0.5)
+nx.draw_networkx_edges(G, pos, edge_color="gray", width=0.3)
 
-# Assign and label top nodes with titles
+# Assign and label nodes with titles without y_offset
 for node, label in titles_above_threshold.items():
     x, y = pos[node]
-    num_lines = label.count("\n") + 1
-    y_offset = 0.01 * 2  # Adjust this factor as needed to position the text correctly
-    plt.text(x, y + y_offset, label, fontsize=20, ha="center", va="center")
+    plt.text(x, y, label, fontsize=font_sizes[node], ha="center", va="center", wrap=True)
 
-plt.title("Graph of Paper References")
+plt.axis("off")
 plt.show()
+# # Print the names of all the nodes
+# print("Names of all nodes:")
+# for node in top_nodes:
+#     full_title = get_paper_title(node, api_key)
+#     if full_title:
+#         print(full_title)
 
-# %%
+# %%Run - Update File Path
 # Generate a graph of all the papers with more than 10 internal references
 import json
 import matplotlib.pyplot as plt
@@ -527,9 +637,9 @@ title_to_technique = {
     "A Practical Survey on Zero-Shot Prompt Design for In-Context Learning": "Zero-Shot Prompt",
     "Prompt Programming for Large Language Models: Beyond the Few-Shot Paradigm": "Role Prompting",
     "Bounding the Capabilities of Large Language Models in Open Text Generation with Prompt Constraints": "Style Prompting",
-    "Language Models are Few-Shot Learners": "In-context learning (ICL)",
-    "A Survey on In-context Learning": "Few-shot learning (FSL)",
-    "What Makes Good In-Context Examples for {GPT}-3?": "K-Nearest Neighbor (KNN)",
+    "Language Models are Few-Shot Learners": "Few-shot Learning (FSL)",
+    # "A Survey on In-context Learning": "In-context learning (ICL)",
+    "What Makes Good In-Context Examples for {\GPT}-3?": "In-Context Learning (ICL)",
     "Finding Support Examples for In-Context Learning": "fiLter-thEN-Search (LENS)",
     "Unified Demonstration Retriever for In-Context Learning": "Unified Demonstration Retriever (UDR)",
     "Fantastically Ordered Prompts and Where to Find Them: Overcoming Few-Shot Prompt Order Sensitivity": "Example Ordering",
@@ -587,17 +697,21 @@ title_to_technique = {
 }
 
 # Load the existing dictionary of paper references
-with open("cleaned_complete_paper_references.json", "r") as file:
+with open(
+    "/Users/aayushgupta/Documents/GitHub/Prompt_Systematic_Review/src/prompt_systematic_review/experiments/cleaned_complete_paper_references.json",
+    "r",
+) as file:
     paper_references = json.load(file)
 
-# Query each title and get citation counts
+# Initialize a dictionary for citation counts
 citation_counts = {}
+
+# Iterate over the title_to_technique mapping
 for title, technique in title_to_technique.items():
-    paper_id = query_paper_id(title, api_key)
-    if paper_id and paper_id in paper_references:
-        citation_count = len(paper_references[paper_id])
-        citation_counts[technique] = citation_count
-        print({technique}, {citation_count})
+    paper_id = query_paper_id(title, api_key)  # Get the paper ID for each title
+    # Count how many times each paper_id appears in the reference lists of other papers
+    citation_count = sum(paper_id in refs for refs in paper_references.values())
+    citation_counts[technique] = citation_count
 
 # Sort the citation counts in descending order
 sorted_citations = sorted(citation_counts.items(), key=lambda x: x[1], reverse=True)
@@ -611,13 +725,21 @@ plt.bar(
     sorted_techniques, sorted_counts, color=(45 / 255, 137 / 255, 145 / 255, 1)
 )  # RGBA color
 
+plt.yscale("log")
+
 # Rotate the x-axis labels by 45 degrees for better readability
-plt.xticks(rotation=90, ha="right")  # ha='right' aligns the labels at the right angle
+plt.xticks(rotation=45, ha="right")
+
+# Remove the top and right borders
+ax = plt.gca()  # Get current axes
+ax.spines["top"].set_visible(False)
+ax.spines["right"].set_visible(False)
 
 # Add labels and title
 plt.ylabel("Number of References")
 plt.xlabel("Technique")
-plt.title("Citation Counts for Techniques Based on Papers")
+# plt.title("Internal Citation Counts for Techniques Based on Papers")
 
 plt.tight_layout()  # Adjusts layout to prevent clipping of labels
 plt.show()
+# %%
